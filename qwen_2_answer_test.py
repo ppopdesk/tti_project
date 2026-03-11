@@ -6,7 +6,7 @@ from datasets import load_dataset
 import re
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "qwen2.5:7b"
+MODEL_NAME = "qwen2.5:7b-instruct"
 
 def get_logprobs(prompt):
     payload = {
@@ -18,7 +18,7 @@ def get_logprobs(prompt):
         "top_logprobs": 5
     }
     response = requests.post(OLLAMA_URL, json=payload).json()
-    # print(f"First response: {response}")
+    print(f"First response: {response}")
     token_info = response['logprobs'][0]
     candidates = token_info['top_logprobs']
     
@@ -47,7 +47,7 @@ def get_reasoned_answer(question, options_text):
     }
     
     response = requests.post(OLLAMA_URL, json=payload).json()
-    # print(f"Reasoning response: {response}")
+    print(f"Reasoning response: {response}")
 
     full_text = response['response']
     
