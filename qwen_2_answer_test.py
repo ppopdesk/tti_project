@@ -65,8 +65,7 @@ def run_gated_test():
     idx_to_letter = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
 
     for i, entry in enumerate(ds):
-        if i < 10: continue
-        
+        if i > 5: break
         # Format basics
         q_text = entry['sent1']
         opts_list = [f"{idx_to_letter[j]}) {entry[f'ending{j}']}" for j in range(4)]
