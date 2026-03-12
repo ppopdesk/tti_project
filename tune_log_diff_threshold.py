@@ -2,12 +2,11 @@ import requests
 import json
 import math
 import pandas as pd
-from tqdm import tqdm
 from datasets import load_dataset
 
 # --- CONFIG ---
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "qwen2.5:7b"
+MODEL_NAME = "qwen2.5:7b-instruct"
 OUTPUT_FILE = "medqa_val_probe_results.csv"
 
 def get_margin_metrics(prompt):
@@ -21,6 +20,7 @@ def get_margin_metrics(prompt):
     }
     try:
         res = requests.post(OLLAMA_URL, json=payload).json()
+
         ti = res['logprobs'][0]
         cands = ti['top_logprobs']
         
@@ -41,7 +41,7 @@ def get_margin_metrics(prompt):
         
         return "N/A", 0.0, "N/A", 0.0, 0.0
     except Exception as e:
-        print(e)
+        print(f"error: {e}")
         return "ERROR", 0.0, "ERROR", 0.0, 0.0
 
 # --- DATA COLLECTION ---
@@ -50,7 +50,9 @@ results = []
 
 print(f"🚀 Starting Probe on 1.27k Validation Questions...")
 
-for i, entry in enumerate(tqdm(ds_val)):
+for i, entry in enumerate(ds_val):
+    if i > 5:
+        break
     correct_answer = {0:'A', 1:'B', 2:'C', 3:'D'}[entry['label']]
     opts = "\n".join([f"{k}) {entry[f'ending{j}']}" for j, k in enumerate('ABCD')])
     prompt = f"You are answering a multiple-choice question.\n Return ONLY the letter of the correct option (A, B, C, D, ...).\n\n Question:\n{entry['sent1']}\n\nOptions:\n{opts}\n\nAnswer:"
