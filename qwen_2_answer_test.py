@@ -18,7 +18,6 @@ def get_logprobs(prompt):
         "top_logprobs": 5
     }
     response = requests.post(OLLAMA_URL, json=payload).json()
-    print(f"First response: {response}")
     token_info = response['logprobs'][0]
     candidates = token_info['top_logprobs']
     
@@ -47,7 +46,6 @@ def get_reasoned_answer(question, options_text):
     }
     
     response = requests.post(OLLAMA_URL, json=payload).json()
-    print(f"Reasoning response: {response}")
 
     full_text = response['response']
     
@@ -65,8 +63,7 @@ def run_gated_test():
     idx_to_letter = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
 
     for i, entry in enumerate(ds):
-        if i > 5: break
-        # Format basics
+	# Format basics
         q_text = entry['sent1']
         opts_list = [f"{idx_to_letter[j]}) {entry[f'ending{j}']}" for j in range(4)]
         opts_text = "\n".join(opts_list)
