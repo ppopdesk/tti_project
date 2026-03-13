@@ -20,15 +20,16 @@ def get_logprobs(prompt):
     response = requests.post(OLLAMA_URL, json=payload).json()
     token_info = response['logprobs'][0]
     candidates = token_info['top_logprobs']
+    output_tokens = response.get('eval_count', 0)
     
     # Filter for A, B, C, D
     valid = [c for c in candidates if c['token'].strip().upper().replace(")", "") in ['A', 'B', 'C', 'D']]
     
     if len(valid) >= 2:
-        return valid[0]['token'].strip().upper(), (valid[0]['logprob'] - valid[1]['logprob']), candidates
+        return valid[0]['token'].strip().upper(), (valid[0]['logprob'] - valid[1]['logprob']), candidates, output_tokens
     elif len(valid) == 1:
-        return valid[0]['token'].strip().upper(), 99.0, candidates # Extremely high confidence
-    return None, 0, candidates
+        return valid[0]['token'].strip().upper(), 99.0, candidates, output_tokens  # Extremely high confidence
+    return None, 0, candidates, output_tokens
 
 def get_reasoned_answer(question, options_text):
     # Fixed the variable name from 'opts' to 'options_text'
@@ -48,15 +49,17 @@ def get_reasoned_answer(question, options_text):
     response = requests.post(OLLAMA_URL, json=payload).json()
 
     full_text = response['response']
+    output_tokens = response.get('eval_count', 0)
     
     # Improved Extraction Logic: Look for "Final Answer: X" or just the last capitalized letter
     match = re.search(r"Final Answer:\s*([A-D])", full_text, re.IGNORECASE)
     if match:
-        return match.group(1).upper()
+        return match.group(1).upper(), output_tokens
     
     # Fallback: find the last occurrence of A, B, C, or D in the text
     backup_match = re.findall(r"\b([A-D])\b", full_text)
-    return backup_match[-1].upper() if backup_match else "A" # Default fallback
+    final_answer = backup_match[-1].upper() if backup_match else "A"
+    return final_answer, output_tokens
 
 def run_gated_test():
     ds = load_dataset("openlifescienceai/MedQA-USMLE-4-options-hf", split="test", streaming=True)
@@ -71,23 +74,29 @@ def run_gated_test():
 
         # 1. PROBE: Check confidence
         probe_prompt = f"Question: {q_text}\nOptions:\n{opts_text}\nAnswer (Letter only):"
-        top_choice, log_diff, all_candidates = get_logprobs(probe_prompt)
+        top_choice, log_diff, all_candidates, probe_output_tokens = get_logprobs(probe_prompt)
 
         print(f"Q{i+1} Analysis:")
         print(f"Top choice: {top_choice}")
         print(f"  Initial Log-Diff: {log_diff:.4f}")
+        print(f"  Probe output tokens: {probe_output_tokens}")
 
         # 2. GATE: Decide if we need reasoning
-        if log_diff < 10:
+        total_output_tokens = probe_output_tokens
+        if log_diff < 22.53:
             print(f"  ⚠️ Confidence low (< 10). Invoking Reasoning Mode...")
-            reasoning_output = get_reasoned_answer(q_text, opts_text)
+            reasoning_output, reason_output_tokens = get_reasoned_answer(q_text, opts_text)
+            total_output_tokens += reason_output_tokens
             
-            # Simple extraction: look for 'Final Answer: X'
-            final_pred = reasoning_output.split("Final Answer:")[-1].strip()[0] if "Final Answer:" in reasoning_output else top_choice
+            # reasoning_output is already the extracted letter from get_reasoned_answer
+            final_pred = reasoning_output
             print(f"  Reasoning Result: {final_pred}")
+            print(f"  Reasoning output tokens: {reason_output_tokens}")
         else:
             print(f"  ✅ High confidence. Sticking with Top-1.")
             final_pred = top_choice
+
+        print(f"  Total output tokens: {total_output_tokens}")
 
         status = "CORRECT" if final_pred == correct_answer else f"WRONG (Target: {correct_answer})"
         print(f"  FINAL RESULT: {final_pred} | {status}\n" + "-"*40)
