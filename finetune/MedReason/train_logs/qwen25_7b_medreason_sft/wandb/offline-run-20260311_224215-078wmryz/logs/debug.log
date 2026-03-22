@@ -1,0 +1,21 @@
+2026-03-11 22:42:15,375 INFO    MainThread:614039 [wandb_setup.py:_flush():81] Current SDK version is 0.25.1
+2026-03-11 22:42:15,375 INFO    MainThread:614039 [wandb_setup.py:_flush():81] Configure stats pid to 614039
+2026-03-11 22:42:15,375 INFO    MainThread:614039 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-03-11 22:42:15,375 INFO    MainThread:614039 [wandb_init.py:setup_run_log_directory():717] Logging user logs to train_logs/qwen25_7b_medreason_sft/wandb/offline-run-20260311_224215-078wmryz/logs/debug.log
+2026-03-11 22:42:15,375 INFO    MainThread:614039 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to train_logs/qwen25_7b_medreason_sft/wandb/offline-run-20260311_224215-078wmryz/logs/debug-internal.log
+2026-03-11 22:42:15,375 INFO    MainThread:614039 [wandb_init.py:init():844] calling init triggers
+2026-03-11 22:42:15,376 INFO    MainThread:614039 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'experiment_name': 'qwen25_7b_medreason_sft', 'model_path': 'Qwen/Qwen2.5-7B-Instruct', 'data_path': '/home/nakarmi/project/545-project/medreason_ours_train.jsonl', 'output_dir': './ckpts/qwen25_7b_medreason_sft', 'max_ckpts': 2, 'log_dir': './train_logs/qwen25_7b_medreason_sft', 'max_seq_len': 1024, 'gradient_checkpointing': False, 'gradient_accumulation_steps': 16, 'train_bsz_per_gpu': 1, 'weight_decay': 0.1, 'learning_rate': 5e-06, 'warmup_rates': 0.05, 'n_epochs': 1, 'base_model': 'Qwen', 'optim': 'paged_adamw8bit', 'seed': 2002, '_wandb': {}}
+2026-03-11 22:42:15,376 INFO    MainThread:614039 [wandb_init.py:init():892] starting backend
+2026-03-11 22:42:15,594 INFO    MainThread:614039 [wandb_init.py:init():895] sending inform_init request
+2026-03-11 22:42:15,599 INFO    MainThread:614039 [wandb_init.py:init():903] backend started and connected
+2026-03-11 22:42:15,600 INFO    MainThread:614039 [wandb_init.py:init():973] updated telemetry
+2026-03-11 22:42:15,601 INFO    MainThread:614039 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-03-11 22:42:15,720 INFO    MainThread:614039 [wandb_init.py:init():1042] starting run threads in backend
+2026-03-11 22:42:15,782 INFO    MainThread:614039 [wandb_run.py:_console_start():2524] atexit reg
+2026-03-11 22:42:15,783 INFO    MainThread:614039 [wandb_run.py:_redirect():2373] redirect: wrap_raw
+2026-03-11 22:42:15,783 INFO    MainThread:614039 [wandb_run.py:_redirect():2442] Wrapping output streams.
+2026-03-11 22:42:15,783 INFO    MainThread:614039 [wandb_run.py:_redirect():2465] Redirects installed.
+2026-03-11 22:42:15,784 INFO    MainThread:614039 [wandb_init.py:init():1082] run started, returning control to user process
+2026-03-11 22:42:27,510 INFO    wandb-AsyncioManager-main:614039 [service_client.py:_forward_responses():134] Reached EOF.
+2026-03-11 22:42:27,510 INFO    wandb-AsyncioManager-main:614039 [mailbox.py:close():155] Closing mailbox, abandoning 0 handles.
