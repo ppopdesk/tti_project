@@ -15,7 +15,8 @@ def analyze(filepath="out.txt"):
     no_reasoning_correct = 0
     reasoning_changed_answer = 0
 
-    for block in blocks:
+    for i, block in enumerate(blocks):
+        if i > 426: break
         block = block.strip()
         if not block:
             continue
@@ -58,5 +59,5 @@ def analyze(filepath="out.txt"):
 
 
 if __name__ == "__main__":
-    path = sys.argv[1] if len(sys.argv) > 1 else "out.txt"
+    path = sys.argv[1] if len(sys.argv) > 1 else "experiment_logs.txt"
     analyze(path)

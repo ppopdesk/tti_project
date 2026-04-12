@@ -20,10 +20,9 @@ def get_margin_metrics(prompt):
     }
     try:
         res = requests.post(OLLAMA_URL, json=payload).json()
-
         ti = res['logprobs'][0]
         cands = ti['top_logprobs']
-        
+
         valid = []
         seen_letters = set()
         for c in cands:

@@ -1,14 +1,19 @@
 import requests
-import json
-import math
-from typing import List, Dict
 from datasets import load_dataset
 import re
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "qwen2.5:7b-instruct"
+LOG_DIFF_THRESHOLD = 22.53
 
-def get_logprobs(prompt):
+def get_no_reasoning_answer(question, options_text):
+    prompt = (
+        f"Provide the letter corresponding to the final answer to this question as your "
+        "output. Your output should only be the letter of the output, nothing else, "
+        "as follows: [Letter]."
+        "Question: {question}\nOptions:\n{options_text}\n\n"
+    )
+
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
@@ -32,11 +37,10 @@ def get_logprobs(prompt):
     return None, 0, candidates, output_tokens
 
 def get_reasoned_answer(question, options_text):
-    # Fixed the variable name from 'opts' to 'options_text'
     reasoning_prompt = (
-        f"Question: {question}\nOptions:\n{options_text}\n\n"
-        "Think step-by-step about the clinical presentation, the differential diagnosis, "
+        f"Think step-by-step about the clinical presentation, the differential diagnosis, "
         "and then provide the final answer letter at the end as 'Final Answer: [Letter]'"
+        "Question: {question}\nOptions:\n{options_text}\n\n"
     )
     
     payload = {
@@ -51,30 +55,25 @@ def get_reasoned_answer(question, options_text):
     full_text = response['response']
     output_tokens = response.get('eval_count', 0)
     
-    # Improved Extraction Logic: Look for "Final Answer: X" or just the last capitalized letter
     match = re.search(r"Final Answer:\s*([A-D])", full_text, re.IGNORECASE)
     if match:
         return match.group(1).upper(), output_tokens
-    
-    # Fallback: find the last occurrence of A, B, C, or D in the text
-    backup_match = re.findall(r"\b([A-D])\b", full_text)
-    final_answer = backup_match[-1].upper() if backup_match else "A"
-    return final_answer, output_tokens
+    else:    
+        final_answer = None
+        return final_answer, output_tokens
 
 def run_gated_test():
     ds = load_dataset("openlifescienceai/MedQA-USMLE-4-options-hf", split="test", streaming=True)
     idx_to_letter = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
 
     for i, entry in enumerate(ds):
-	# Format basics
+        if i > 5: break
         q_text = entry['sent1']
         opts_list = [f"{idx_to_letter[j]}) {entry[f'ending{j}']}" for j in range(4)]
         opts_text = "\n".join(opts_list)
         correct_answer = idx_to_letter[entry['label']]
 
-        # 1. PROBE: Check confidence
-        probe_prompt = f"Question: {q_text}\nOptions:\n{opts_text}\nAnswer (Letter only):"
-        top_choice, log_diff, all_candidates, probe_output_tokens = get_logprobs(probe_prompt)
+        top_choice, log_diff, all_candidates, probe_output_tokens = get_no_reasoning_answer(q_text, opts_text)
 
         print(f"Q{i+1} Analysis:")
         print(f"Top choice: {top_choice}")
@@ -83,17 +82,16 @@ def run_gated_test():
 
         # 2. GATE: Decide if we need reasoning
         total_output_tokens = probe_output_tokens
-        if log_diff < 22.53:
-            print(f"  ⚠️ Confidence low (< 10). Invoking Reasoning Mode...")
+        if log_diff < LOG_DIFF_THRESHOLD:
+            print(f"  Confidence low (< {LOG_DIFF_THRESHOLD}). Invoking Reasoning Mode...")
             reasoning_output, reason_output_tokens = get_reasoned_answer(q_text, opts_text)
             total_output_tokens += reason_output_tokens
             
-            # reasoning_output is already the extracted letter from get_reasoned_answer
             final_pred = reasoning_output
             print(f"  Reasoning Result: {final_pred}")
             print(f"  Reasoning output tokens: {reason_output_tokens}")
         else:
-            print(f"  ✅ High confidence. Sticking with Top-1.")
+            print(f"    High confidence. Sticking with Top-1.")
             final_pred = top_choice
 
         print(f"  Total output tokens: {total_output_tokens}")
