@@ -3,15 +3,14 @@ from datasets import load_dataset
 import re
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "qwen2.5:7b-instruct"
+MODEL_NAME = "qwen2.5:7b"
 LOG_DIFF_THRESHOLD = 22.53
 
 def get_no_reasoning_answer(question, options_text):
     prompt = (
-        f"Provide the letter corresponding to the final answer to this question as your "
-        "output. Your output should only be the letter of the output, nothing else, "
-        "as follows: [Letter]."
-        "Question: {question}\nOptions:\n{options_text}\n\n"
+        f"Question: {question}\nOptions:\n{options_text}\n\n"
+        "Provide the letter corresponding to the correct final answer to this question. "
+        "Your output should only be the letter of your chosen output choice, nothing else."
     )
 
     payload = {
@@ -31,16 +30,16 @@ def get_no_reasoning_answer(question, options_text):
     valid = [c for c in candidates if c['token'].strip().upper().replace(")", "") in ['A', 'B', 'C', 'D']]
     
     if len(valid) >= 2:
-        return valid[0]['token'].strip().upper(), (valid[0]['logprob'] - valid[1]['logprob']), candidates, output_tokens
+        return valid[0]['token'].strip().upper(), valid[1]['token'].strip().upper(), (valid[0]['logprob'] - valid[1]['logprob']), candidates, output_tokens
     elif len(valid) == 1:
-        return valid[0]['token'].strip().upper(), 99.0, candidates, output_tokens  # Extremely high confidence
-    return None, 0, candidates, output_tokens
+        return valid[0]['token'].strip().upper(), None, 99.0, candidates, output_tokens
+    return None, None, 0, candidates, output_tokens
 
 def get_reasoned_answer(question, options_text):
     reasoning_prompt = (
-        f"Think step-by-step about the clinical presentation, the differential diagnosis, "
+        f"Question: {question}\nOptions:\n{options_text}\n\n"
+        "Think step-by-step about the clinical presentation, the differential diagnosis, "
         "and then provide the final answer letter at the end as 'Final Answer: [Letter]'"
-        "Question: {question}\nOptions:\n{options_text}\n\n"
     )
     
     payload = {
@@ -54,6 +53,7 @@ def get_reasoned_answer(question, options_text):
 
     full_text = response['response']
     output_tokens = response.get('eval_count', 0)
+    print(full_text)
     
     match = re.search(r"Final Answer:\s*([A-D])", full_text, re.IGNORECASE)
     if match:
@@ -73,16 +73,21 @@ def run_gated_test():
         opts_text = "\n".join(opts_list)
         correct_answer = idx_to_letter[entry['label']]
 
-        top_choice, log_diff, all_candidates, probe_output_tokens = get_no_reasoning_answer(q_text, opts_text)
+        top_choice, second_choice, log_diff, all_candidates, probe_output_tokens = get_no_reasoning_answer(q_text, opts_text)
 
         print(f"Q{i+1} Analysis:")
         print(f"Top choice: {top_choice}")
         print(f"  Initial Log-Diff: {log_diff:.4f}")
         print(f"  Probe output tokens: {probe_output_tokens}")
+        print(f"  All candidates: {all_candidates}")
 
-        # 2. GATE: Decide if we need reasoning
         total_output_tokens = probe_output_tokens
-        if log_diff < LOG_DIFF_THRESHOLD:
+
+        # if the top two answers are the same, don't escalate to reasoning
+        if top_choice == second_choice:
+            print(f"  Top 2 choices are the same. Sticking with Top-1")
+            final_pred = top_choice
+        elif log_diff < LOG_DIFF_THRESHOLD:
             print(f"  Confidence low (< {LOG_DIFF_THRESHOLD}). Invoking Reasoning Mode...")
             reasoning_output, reason_output_tokens = get_reasoned_answer(q_text, opts_text)
             total_output_tokens += reason_output_tokens

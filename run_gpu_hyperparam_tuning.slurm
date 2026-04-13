@@ -44,7 +44,7 @@ nvidia-smi || true
 curl -s http://localhost:11434/api/tags || true
 
 # Run your script
-python -u qwen_2_answer_test.py > logs/out-test.txt 2>&1
+python -u confidence_based_reasoning/tune_log_diff_threshold.py > logs/out-test.txt 2>&1
 
 # Cleanup
 kill $OLPID || true
