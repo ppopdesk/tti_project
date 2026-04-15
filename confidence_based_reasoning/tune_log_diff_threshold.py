@@ -2,13 +2,20 @@ import requests
 from datasets import load_dataset
 import re
 import json
+import os
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "vijayavp/medreason-qwen25-shortcot-exp2:latest"
 VAL_SIZE = 300
-OUTPUT_FILE = "medqa_calibration_data.json"
+
+# Outputs always go next to this script (independent of SLURM / shell cwd).
+_SCRIPT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", _SCRIPT_DIR)).resolve()
+OUTPUT_FILE = OUTPUT_DIR / "medqa_calibration_data.json"
+GRID_SEARCH_CSV = OUTPUT_DIR / "medqa_threshold_grid_search.csv"
 
 def get_no_reasoning_answer(question, options_text):
     prompt = (
@@ -72,7 +79,7 @@ def collect_data():
     results = []
 
     for i, entry in enumerate(ds):
-        if i >= VAL_SIZE: break
+        if i >= 2: break
         
         q_text = entry['sent1']
         opts_list = [f"{idx_to_letter[j]}) {entry[f'ending{j}']}" for j in range(4)]
@@ -92,8 +99,10 @@ def collect_data():
         })
         if i % 10 == 0: print(f"Processed {i}/{VAL_SIZE}...")
 
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_FILE, 'w') as f:
         json.dump(results, f)
+    print(f"Wrote calibration data to {OUTPUT_FILE}", flush=True)
     return results
 
 def run_grid_search(data):
@@ -143,6 +152,6 @@ if __name__ == "__main__":
         data = collect_data()
     
     df = run_grid_search(data)
-    # Save the full search results to a CSV file
-    df.to_csv("medqa_threshold_grid_search.csv", index=False)
-    print(f"\nGrid search results exported to 'medqa_threshold_grid_search.csv'")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_csv(GRID_SEARCH_CSV, index=False)
+    print(f"\nGrid search results exported to {GRID_SEARCH_CSV}", flush=True)
