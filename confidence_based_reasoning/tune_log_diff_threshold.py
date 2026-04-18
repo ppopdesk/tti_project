@@ -7,11 +7,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+from pipeline_config import NO_REASONING_PROMPT, SHORT_REASONING_PROMPT, LONG_REASONING_PROMPT
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "vijayavp/medreason-qwen25-shortcot-exp2:latest"
 VAL_SIZE = 300
 
-# Outputs always go next to this script (independent of SLURM / shell cwd).
 _SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", _SCRIPT_DIR)).resolve()
 OUTPUT_FILE = OUTPUT_DIR / "medqa_calibration_data.json"
