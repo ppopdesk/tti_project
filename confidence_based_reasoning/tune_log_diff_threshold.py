@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+# Repo root on path: needed when running this file directly (e.g. Slurm) without pip install.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import requests
 from datasets import load_dataset
 import re
@@ -5,9 +13,8 @@ import json
 import os
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
-from pipeline_config import NO_REASONING_PROMPT, SHORT_REASONING_PROMPT, LONG_REASONING_PROMPT
+from prompts import NO_REASONING_PROMPT, SHORT_REASONING_PROMPT, LONG_REASONING_PROMPT
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "vijayavp/medreason-qwen25-shortcot-exp2:latest"
@@ -19,11 +26,7 @@ OUTPUT_FILE = OUTPUT_DIR / "medqa_calibration_data.json"
 GRID_SEARCH_CSV = OUTPUT_DIR / "medqa_threshold_grid_search.csv"
 
 def get_no_reasoning_answer(question, options_text):
-    prompt = (
-        f"Question: {question}\nOptions:\n{options_text}\n\n"
-        "Provide the letter corresponding to the correct final answer to this question. "
-        "Your output should only be the letter of your chosen output choice, nothing else."
-    )
+    prompt = NO_REASONING_PROMPT.format(question=question, options_text=options_text)
 
     payload = {
         "model": MODEL_NAME,
@@ -48,11 +51,7 @@ def get_no_reasoning_answer(question, options_text):
     return None, None, 0, candidates, output_tokens
 
 def get_reasoned_answer(question, options_text):
-    reasoning_prompt = (
-        f"Question: {question}\nOptions:\n{options_text}\n\n"
-        "Think step-by-step about the clinical presentation, the differential diagnosis, "
-        "and then provide the final answer letter at the end as 'Final Answer: [Letter]'"
-    )
+    reasoning_prompt = LONG_REASONING_PROMPT.format(question=question, options=options_text)
     
     payload = {
         "model": MODEL_NAME,

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tti-project"
+version = "0.0.0"
+description = "CSE545 TTI project"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+py-modules = ["prompts"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pipeline*", "confidence_based_reasoning*", "short_cot*", "token_entropy*"]
