@@ -44,7 +44,7 @@ def main(args):
     # Step 1: Fast pass on ALL questions
     print("\nRunning fast passes on all questions...")
     fast_prompts = [format_fast_prompt(ex["prompt_messages"], tokenizer) for ex in examples]
-    fast_params = SamplingParams(temperature=0.0, max_tokens=1, logprobs=20)
+    fast_params = SamplingParams(temperature=0.0, max_tokens=10, logprobs=20)
     fast_outputs = llm.generate(fast_prompts, fast_params)
 
     fast_data = []
