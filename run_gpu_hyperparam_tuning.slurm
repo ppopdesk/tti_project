@@ -4,8 +4,8 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=24G
-#SBATCH --time=02:00:00
+#SBATCH --mem=32G             # Increased to 32G for safer overhead with 7B models
+#SBATCH --time=00:10:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/error%x-%j.out
 
@@ -16,35 +16,20 @@ mkdir -p logs
 # Load modules
 module purge
 module load python
-module load ollama
 
 # Activate your venv
 source venv/bin/activate
 
 pip install -r requirements.txt
 
-# IMPORTANT: run ollama on the same port your code uses (11434)
-export OLLAMA_HOST=127.0.0.1:11434
-# Optional: store large models somewhere with space (recommended)
-# export OLLAMA_MODELS=/scratch/$USER/ollama_models
-# mkdir -p "$OLLAMA_MODELS"
+# 4. Handle Model Caching (Crucial for Slurm)
+# By default, Transformers saves to ~/.cache. This can fill up your home quota.
+# It is better to point this to a scratch directory.
+export HF_HOME=/scratch/$USER/huggingface_cache
+mkdir -p "$HF_HOME"
 
-# Start Ollama server in background
-ollama serve > logs/ollama-${SLURM_JOB_ID}.log 2>&1 &
-OLPID=$!
-
-# Give server a moment
-sleep 3
-
-# Pull model (first run only; can take time + disk)
-ollama pull qwen2.5:7b-instruct
-
-# Sanity check GPU + server
+# 5. Sanity check GPU
 nvidia-smi || true
-curl -s http://localhost:11434/api/tags || true
 
 # Run your script
 python -u confidence_based_reasoning/tune_log_diff_threshold.py > logs/out-test.txt 2>&1
-
-# Cleanup
-kill $OLPID || true

@@ -1,2 +1,6 @@
 datasets
 requests
+torch
+transformers
+peft
+accelerate
