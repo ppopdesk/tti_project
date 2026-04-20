@@ -1,250 +1,159 @@
-import sys
 import os
 import re
 import json
-import torch
+import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from vllm import LLM, SamplingParams
+from transformers import AutoTokenizer
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import AutoPeftModelForCausalLM
-
-# --- Path Handling ---
-# Repo root on path: needed when running this file directly (e.g. Slurm)
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-# Import your custom prompts from prompts.py
-try:
-    from prompts import NO_REASONING_PROMPT, LONG_REASONING_PROMPT
-except ImportError:
-    print("Warning: prompts.py not found. Please ensure it is in the same directory or repo root.")
-    # Fallback placeholders if needed
-    NO_REASONING_PROMPT = "Question: {question}\nOptions: {options_text}\nAnswer:"
-    LONG_REASONING_PROMPT = "Question: {question}\nOptions: {options}\nReasoning:"
 
 # --- Configuration ---
 MODEL_NAME = "ShivaniiKum/qwen-medreason-finetuned"
 VAL_SIZE = 300
-SAVE_EVERY = 10
 
+# Path handling consistent with your original script
 _SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", _SCRIPT_DIR)).resolve()
-OUTPUT_FILE = OUTPUT_DIR / "medqa_calibration_data.json"
+OUTPUT_FILE = OUTPUT_DIR / "medqa_calibration_data_vllm.json"
 GRID_SEARCH_CSV = OUTPUT_DIR / "medqa_threshold_grid_search.csv"
+
+# Token IDs for A-D in Qwen2.5 (Verified)
+LETTER_TOKEN_IDS = {"A": 32, "B": 33, "C": 34, "D": 35}
 
 # --- Utilities ---
 
 def _atomic_write_json(path: Path, obj) -> None:
-    """Prevents file corruption by writing to a temp file then swapping."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "w") as f:
-        # We use float() conversion because numpy/torch types aren't JSON serializable
         json.dump(obj, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
     tmp_path.replace(path)
 
-def load_model_and_tokenizer(model_name: str):
-    print(f"Loading merged fine-tuned model from {model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    # Use BitsAndBytes for the 16GB V100 memory management
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16, 
-        bnb_4bit_use_double_quant=True,
+def format_prompt(tokenizer, question, options_text, target_tag):
+    """Matches the teammate's chat template formatting logic."""
+    user_content = f"Question: {question}\nOptions: {options_text}"
+    messages = [
+        {"role": "user", "content": user_content},
+        {"role": "assistant", "content": f"<{target_tag}>\n"},
+    ]
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+        continue_final_message=True,
     )
 
-    # Load directly as a standard Causal LM (skipping the PEFT check)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        quantization_config=bnb_config,
-        device_map="auto",
+def extract_answer_letter(text: str) -> str:
+    """Extracts A/B/C/D from the generated reasoning text."""
+    match = re.search(r"<ANSWER>\s*([A-D])\s*</ANSWER>", text, re.IGNORECASE)
+    if match: return match.group(1).upper()
+    matches = re.findall(r'\b([A-D])\b', text.upper())
+    return matches[-1] if matches else "A"
+
+# --- Main Logic ---
+
+def main():
+    print(f"Loading tokenizer and vLLM model: {MODEL_NAME}...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    
+    # Initialize vLLM the same way her code does
+    # Note: On V100, float16 is often faster than bfloat16
+    llm = LLM(
+        model=MODEL_NAME,
         trust_remote_code=True,
+        tensor_parallel_size=1,
+        gpu_memory_utilization=0.90,
+        dtype="float16", 
     )
-    return model.eval(), tokenizer
 
-def build_hf_prompt(tokenizer, user_text: str, assistant_prefix: str = ""):
-    """Formats prompt using Qwen template and injects target prefix for steering."""
-    messages = [{"role": "user", "content": user_text}]
-    # add_generation_prompt adds the <|im_start|>assistant header
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    return prompt + assistant_prefix
-
-# --- Core Inference Logic ---
-
-def get_no_reasoning_answer(model, tokenizer, question, options_text):
-    """
-    Calculates log_diff: log(P_top1) - log(P_top2).
-    Injects <ANSWER> tag to force the model to pick a letter immediately.
-    """
-    raw_content = NO_REASONING_PROMPT.format(question=question, options_text=options_text)
-    full_prompt = build_hf_prompt(tokenizer, raw_content, assistant_prefix="<ANSWER>\n")
-    
-    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
-    
-    with torch.no_grad():
-        outputs = model(**inputs)
-        logits = outputs.logits[0, -1, :]
-        probs = torch.softmax(logits, dim=-1)
-    
-    # Map letters to their specific token IDs in Qwen's vocab
-    choice_ids = {letter: tokenizer.encode(letter, add_special_tokens=False)[-1] for letter in ['A', 'B', 'C', 'D']}
-    choice_probs = {letter: probs[idx].item() for letter, idx in choice_ids.items()}
-    
-    sorted_choices = sorted(choice_probs.items(), key=lambda x: x[1], reverse=True)
-    best_letter, best_prob = sorted_choices[0]
-    second_letter, second_prob = sorted_choices[1]
-    
-    # Calculate Log-Diff
-    log_diff = np.log(best_prob + 1e-9) - np.log(second_prob + 1e-9)
-    
-    return best_letter, second_letter, float(log_diff), 1
-
-def get_reasoned_answer(model, tokenizer, question, options_text):
-    """Generates a full chain-of-thought response starting with <LONG_COT>."""
-    raw_content = LONG_REASONING_PROMPT.format(question=question, options=options_text)
-    full_prompt = build_hf_prompt(tokenizer, raw_content, assistant_prefix="<LONG_COT>\n")
-    
-    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
-    
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=1024,
-            do_sample=False,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-        )
-    
-    # Extract only the generated tokens
-    generated_ids = output_ids[0][inputs["input_ids"].shape[1]:]
-    full_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-    
-    # Extract A/B/C/D from the <ANSWER> tag in the CoT output
-    match = re.search(r"<ANSWER>\s*([A-D])\s*</ANSWER>", full_text, re.IGNORECASE)
-    answer = match.group(1).upper() if match else None
-    
-    return answer, len(generated_ids)
-
-# --- Data Collection and Analysis ---
-
-def collect_data(model, tokenizer):
-    """Main loop to collect MedQA validation results with resume support."""
-    ds = load_dataset("openlifescienceai/MedQA-USMLE-4-options-hf", split="validation", streaming=True)
+    print("Loading MedQA dataset...")
+    ds = load_dataset("openlifescienceai/MedQA-USMLE-4-options-hf", split="validation")
+    examples = ds.select(range(min(VAL_SIZE, len(ds))))
     idx_to_letter = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
-    
+
+    # 1. BATCH FAST PROBE (to get log_diff)
+    print(f"Running fast probes on {len(examples)} questions...")
+    probe_prompts = []
+    for ex in examples:
+        opts = "\n".join([f"{idx_to_letter[j]}) {ex[f'ending{j}']}" for j in range(4)])
+        probe_prompts.append(format_prompt(tokenizer, ex['sent1'], opts, "ANSWER"))
+
+    # Logprobs=20 ensures we get the scores for all 4 letters
+    probe_params = SamplingParams(temperature=0.0, max_tokens=1, logprobs=20)
+    probe_outputs = llm.generate(probe_prompts, probe_params)
+
+    # 2. BATCH REASONING PASS
+    print(f"Running full reasoning on {len(examples)} questions...")
+    reason_prompts = []
+    for ex in examples:
+        opts = "\n".join([f"{idx_to_letter[j]}) {ex[f'ending{j}']}" for j in range(4)])
+        reason_prompts.append(format_prompt(tokenizer, ex['sent1'], opts, "COT"))
+
+    reason_params = SamplingParams(temperature=0.7, top_p=1.0, max_tokens=1024)
+    reason_outputs = llm.generate(reason_prompts, reason_params)
+
+    # 3. PROCESS RESULTS
     results = []
-    if OUTPUT_FILE.exists():
-        try:
-            with open(OUTPUT_FILE, "r") as f:
-                results = json.load(f)
-            print(f"Resuming from index {len(results)}...")
-        except (json.JSONDecodeError, OSError):
-            results = []
-
-    next_i = len(results)
-
-    for i, entry in enumerate(ds):
-        if i >= 3:
-            break
-        if i < next_i:
-            continue
-
-        q_text = entry['sent1']
-        opts_list = [f"{idx_to_letter[j]}) {entry[f'ending{j}']}" for j in range(4)]
-        opts_text = "\n".join(opts_list)
-        correct = idx_to_letter[entry['label']]
-
-        # 1. Quick Probe
-        probe_pred, _, log_diff, probe_tokens = get_no_reasoning_answer(model, tokenizer, q_text, opts_text)
+    for i in range(len(examples)):
+        ex = examples[i]
+        correct = idx_to_letter[ex['label']]
         
-        # 2. Full Reasoning
-        reason_pred, reason_tokens = get_reasoned_answer(model, tokenizer, q_text, opts_text)
+        # Calculate Log-Diff from vLLM logprobs
+        lp_dict = probe_outputs[i].outputs[0].logprobs[0]
+        choice_lps = {
+            letter: lp_dict[tid].logprob if tid in lp_dict else -20.0 
+            for letter, tid in LETTER_TOKEN_IDS.items()
+        }
+        sorted_lps = sorted(choice_lps.items(), key=lambda x: x[1], reverse=True)
+        best_letter, best_lp = sorted_lps[0]
+        second_letter, second_lp = sorted_lps[1]
+        log_diff = float(best_lp - second_lp)
+
+        # Extraction for reasoning
+        reason_text = reason_outputs[i].outputs[0].text
+        reason_pred = extract_answer_letter(reason_text)
+        reason_tokens = len(reason_outputs[i].outputs[0].token_ids)
 
         results.append({
             "id": i,
             "log_diff": log_diff,
-            "probe_correct": bool(probe_pred == correct),
+            "probe_correct": bool(best_letter == correct),
             "reason_correct": bool(reason_pred == correct),
-            "probe_tokens": probe_tokens,
+            "probe_tokens": 1,
             "reason_tokens": int(reason_tokens)
         })
 
-        if len(results) % SAVE_EVERY == 0:
-            _atomic_write_json(OUTPUT_FILE, results)
-            print(f"Checkpoint: saved {len(results)}/{VAL_SIZE} rows to {OUTPUT_FILE}", flush=True)
-
     _atomic_write_json(OUTPUT_FILE, results)
-    return results
+    print(f"Collected data for {len(results)} samples.")
 
-def run_grid_search(data):
-    """Calculates accuracy and token usage across a range of log_diff thresholds."""
-    thresholds = np.linspace(0, 25, 101)
+    # 4. RUN GRID SEARCH (Same logic as original script)
+    thresholds = np.linspace(0, 10, 101) # Log-diff usually ranges 0-10
     analysis = []
-
     for T in thresholds:
         total_correct = 0
         total_tokens = 0
-        escalated_count = 0
-
-        for row in data:
-            # If the model is uncertain (low log_diff), use reasoning
-            if row['log_diff'] < T:
+        esc_count = 0
+        for row in results:
+            if row['log_diff'] < T: # Escalate
                 total_correct += 1 if row['reason_correct'] else 0
                 total_tokens += (row['probe_tokens'] + row['reason_tokens'])
-                escalated_count += 1
-            else:
-                # If certain enough, trust the quick probe
+                esc_count += 1
+            else: # Trust probe
                 total_correct += 1 if row['probe_correct'] else 0
                 total_tokens += row['probe_tokens']
-
-        acc = total_correct / len(data)
-        avg_tokens = total_tokens / len(data)
         
         analysis.append({
             "threshold": round(float(T), 2),
-            "accuracy": round(acc, 4),
-            "avg_tokens": round(avg_tokens, 2),
-            "escalation_rate": round(escalated_count / len(data), 2)
+            "accuracy": round(total_correct / len(results), 4),
+            "avg_tokens": round(total_tokens / len(results), 2),
+            "escalation_rate": round(esc_count / len(results), 2)
         })
 
     df = pd.DataFrame(analysis)
-    print("\n--- Grid Search Results (Summary) ---")
-    print(df[::10].to_string(index=False))
-    
-    best_acc = df['accuracy'].max()
-    best_row = df[df['accuracy'] == best_acc].iloc[0]
-    print(f"\nMax Accuracy: {best_acc} at Threshold {best_row['threshold']}")
-    return df
-
-# --- Main Entry Point ---
-
-def main():
-    # 1. Setup Model
-    model, tokenizer = load_model_and_tokenizer(MODEL_NAME)
-
-    # 2. Collect Data (or load existing)
-    if not OUTPUT_FILE.exists() or len(json.load(open(OUTPUT_FILE))) < VAL_SIZE:
-        data = collect_data(model, tokenizer)
-    else:
-        with open(OUTPUT_FILE, "r") as f:
-            data = json.load(f)
-
-    # 3. Analyze Thresholds
-    df = run_grid_search(data)
-    
-    # 4. Export Results
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df.to_csv(GRID_SEARCH_CSV, index=False)
-    print(f"\nGrid search results exported to {GRID_SEARCH_CSV}")
+    print(f"Max Accuracy: {df['accuracy'].max()} at threshold {df.loc[df['accuracy'].idxmax(), 'threshold']}")
 
 if __name__ == "__main__":
     main()
