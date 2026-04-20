@@ -17,13 +17,28 @@ import pandas as pd
 from prompts import NO_REASONING_PROMPT, SHORT_REASONING_PROMPT, LONG_REASONING_PROMPT
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "vijayavp/medreason-qwen25-shortcot-exp2:latest"
+MODEL_NAME = "qwen2.5:7B"
 VAL_SIZE = 300
+SAVE_EVERY = 10
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", _SCRIPT_DIR)).resolve()
 OUTPUT_FILE = OUTPUT_DIR / "medqa_calibration_data.json"
 GRID_SEARCH_CSV = OUTPUT_DIR / "medqa_threshold_grid_search.csv"
+
+
+def _atomic_write_json(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w") as f:
+        json.dump(obj, f)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp_path.replace(path)
+
+def extract_tag_answer(text):
+    match = re.search(r"<ANSWER>\s*([A-D])\s*</ANSWER>", text, re.IGNORECASE)
+    return match.group(1).upper() if match else None
 
 def get_no_reasoning_answer(question, options_text):
     prompt = NO_REASONING_PROMPT.format(question=question, options_text=options_text)
@@ -66,21 +81,32 @@ def get_reasoned_answer(question, options_text):
     output_tokens = response.get('eval_count', 0)
     print(full_text)
     
-    match = re.search(r"Final Answer:\s*([A-D])", full_text, re.IGNORECASE)
-    if match:
-        return match.group(1).upper(), output_tokens
+    answer = extract_tag_answer(full_text)
+
+    if answer:
+        return answer, output_tokens
     else:    
-        final_answer = None
-        return final_answer, output_tokens
+        return None, output_tokens
 
 def collect_data():
-    ds = load_dataset("openlifescienceai/MedQA-USMLE-4-options-hf", split="test", streaming=True)
+    ds = load_dataset("openlifescienceai/MedQA-USMLE-4-options-hf", split="validation", streaming=True)
     idx_to_letter = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
-    results = []
+    results: list = []
+    if OUTPUT_FILE.exists():
+        try:
+            with open(OUTPUT_FILE, "r") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                results = loaded
+        except (json.JSONDecodeError, OSError):
+            results = []
+
+    next_i = len(results)
 
     for i, entry in enumerate(ds):
-        if i >= 2: break
-        
+        if i < next_i:
+            continue
+
         q_text = entry['sent1']
         opts_list = [f"{idx_to_letter[j]}) {entry[f'ending{j}']}" for j in range(4)]
         opts_text = "\n".join(opts_list)
@@ -97,11 +123,13 @@ def collect_data():
             "probe_tokens": probe_tokens,
             "reason_tokens": reason_tokens
         })
-        if i % 10 == 0: print(f"Processed {i}/{VAL_SIZE}...")
+        n = len(results)
+        if n % SAVE_EVERY == 0:
+            _atomic_write_json(OUTPUT_FILE, results)
+            print(f"Checkpoint: saved {n}/{VAL_SIZE} rows to {OUTPUT_FILE}", flush=True)
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_FILE, 'w') as f:
-        json.dump(results, f)
+    if results:
+        _atomic_write_json(OUTPUT_FILE, results)
     print(f"Wrote calibration data to {OUTPUT_FILE}", flush=True)
     return results
 
@@ -145,10 +173,17 @@ def run_grid_search(data):
     return df
 
 if __name__ == "__main__":
-    try:
-        with open(OUTPUT_FILE, 'r') as f:
-            data = json.load(f)
-    except FileNotFoundError:
+    data = []
+    if OUTPUT_FILE.exists():
+        try:
+            with open(OUTPUT_FILE, "r") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                data = loaded
+        except (json.JSONDecodeError, OSError):
+            data = []
+
+    if len(data) < VAL_SIZE:
         data = collect_data()
     
     df = run_grid_search(data)
