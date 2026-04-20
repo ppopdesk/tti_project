@@ -34,26 +34,38 @@ def load_medqa_parquet(path: str):
 
 
 def format_fast_prompt(prompt_messages, tokenizer):
-    messages = [
-        {"role": "system", "content": "You are a medical expert. Answer the following multiple choice question with only the answer letter (A, B, C, D, or E). Do not explain."}
-    ]
+    user_content = ""
     for msg in prompt_messages:
         if msg["role"] == "user":
-            messages.append(msg)
+            user_content = msg["content"]
             break
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
+    messages = [
+        {"role": "user", "content": user_content},
+        {"role": "assistant", "content": "<ANSWER>\n"},
+    ]
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+        continue_final_message=True,
+    )
 
 def format_reasoning_prompt(prompt_messages, tokenizer):
-    messages = [
-        {"role": "system", "content": "You are a medical expert. Think step by step through the following multiple choice question, then state your final answer inside <ANSWER> tags like: <ANSWER>A</ANSWER>"}
-    ]
+    user_content = ""
     for msg in prompt_messages:
         if msg["role"] == "user":
-            messages.append(msg)
+            user_content = msg["content"]
             break
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
+    messages = [
+        {"role": "user", "content": user_content},
+        {"role": "assistant", "content": "<LONG_COT>\n"},
+    ]
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+        continue_final_message=True,
+    )
 
 def extract_answer_letter(text: str) -> str:
     match = re.search(r'<ANSWER>\s*(?:\\boxed\{)?([A-E])\}?\s*</ANSWER>', text, re.IGNORECASE)
@@ -114,7 +126,7 @@ def main(args):
 
     print("\nRunning fast passes...")
     fast_prompts = [format_fast_prompt(ex["prompt_messages"], tokenizer) for ex in examples]
-    fast_params = SamplingParams(temperature=0.0, max_tokens=1, logprobs=20)
+    fast_params = SamplingParams(temperature=0.0, max_tokens=10, logprobs=20)
     fast_outputs = llm.generate(fast_prompts, fast_params)
     print("Fast passes done.")
 
