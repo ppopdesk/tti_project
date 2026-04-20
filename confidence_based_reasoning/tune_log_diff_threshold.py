@@ -49,29 +49,27 @@ def _atomic_write_json(path: Path, obj) -> None:
     tmp_path.replace(path)
 
 def load_model_and_tokenizer(model_name: str):
-    """Loads the fine-tuned model and ensures pad_token is set."""
-    print(f"Loading tokenizer and model from {model_name}...")
+    print(f"Loading merged fine-tuned model from {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    try:
-        model = AutoPeftModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-            device_map="auto",
-            trust_remote_code=True,
-        )
-        return model.eval(), tokenizer
-    except Exception as e:
-        print(f"PEFT load failed ({e}), attempting standard load...")
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-            device_map="auto",
-            trust_remote_code=True,
-        )
-        return model.eval(), tokenizer
+    # Use BitsAndBytes for the 16GB V100 memory management
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16, 
+        bnb_4bit_use_double_quant=True,
+    )
+
+    # Load directly as a standard Causal LM (skipping the PEFT check)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    return model.eval(), tokenizer
 
 def build_hf_prompt(tokenizer, user_text: str, assistant_prefix: str = ""):
     """Formats prompt using Qwen template and injects target prefix for steering."""
