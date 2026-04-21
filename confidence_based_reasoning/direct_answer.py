@@ -12,9 +12,9 @@ SAVE_INTERVAL = 10
 _SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = _SCRIPT_DIR.parent 
 
-INPUT_FILE = PROJECT_ROOT / "med_qa_json" / "validation.json" 
+INPUT_FILE = PROJECT_ROOT / "med_qa_json" / "test.json" 
 OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", PROJECT_ROOT)).resolve()
-OUTPUT_FILE = OUTPUT_DIR / "medqa_direct_answer_logprobs.json"
+OUTPUT_FILE = OUTPUT_DIR / "medqa_direct_answer_logprobs_test.json"
 
 # Token IDs for A-E in Qwen2.5
 LETTER_TOKEN_IDS = {"A": 32, "B": 33, "C": 34, "D": 35, "E": 36}
