@@ -1,0 +1,10 @@
+{
+  "direct_path": "confidence_based_reasoning/medqa_direct_answer_logprobs.json",
+  "cot_path": "val_set_outputs/cot_answers_validation.json",
+  "n_common": 1272,
+  "direct_accuracy": 0.5974842767295597,
+  "cot_accuracy": 0.6375786163522013,
+  "best_threshold": 4.7,
+  "best_accuracy": 0.6485849056603774,
+  "best_escalation_rate": 0.6415094339622641
+}
