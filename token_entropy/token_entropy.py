@@ -32,6 +32,20 @@ def load_medqa_parquet(path: str):
         })
     return examples
 
+def load_medqa_validation(path: str):
+    df = pd.read_parquet(path)
+    examples = []
+    for _, row in df.iterrows():
+        answer = str(row['answer_idx']).strip().upper()
+        question = row['question']
+        options = row['options']
+        options_text = "\n".join([f"{opt['key']}. {opt['value']}" for opt in options])
+        full_question = f"{question}\nAnswer Choices:\n{options_text}"
+        examples.append({
+            "prompt_messages": [{"role": "user", "content": full_question}],
+            "answer": answer,
+        })
+    return examples
 
 def format_fast_prompt(prompt_messages, tokenizer):
     user_content = ""
@@ -58,7 +72,7 @@ def format_reasoning_prompt(prompt_messages, tokenizer):
             break
     messages = [
         {"role": "user", "content": user_content},
-        {"role": "assistant", "content": "<LONG_COT>\n"},
+        {"role": "assistant", "content": "<COT>\n"},
     ]
     return tokenizer.apply_chat_template(
         messages,
@@ -179,6 +193,7 @@ def main(args):
             "probs": fast_results[i]["probs"],
             "used_reasoning": used_reasoning,
             "is_correct": is_correct,
+            "reasoning_text": reasoning_answers[i]["text"] if used_reasoning else "",
         })
 
     N = len(results)
