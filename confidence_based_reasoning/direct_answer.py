@@ -11,8 +11,11 @@ VAL_SIZE = 300
 SAVE_INTERVAL = 10  # Save progress every 10 questions
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-INPUT_FILE = _SCRIPT_DIR / "med_qa_json" / "validation.json" 
-OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", _SCRIPT_DIR)).resolve()
+# .parent.parent moves from confidence_based_reasoning/ up to tti_project/
+PROJECT_ROOT = _SCRIPT_DIR.parent 
+
+INPUT_FILE = PROJECT_ROOT / "med_qa_json" / "validation.json" 
+OUTPUT_DIR = Path(os.environ.get("MEDQA_CALIBRATION_DIR", PROJECT_ROOT)).resolve()
 OUTPUT_FILE = OUTPUT_DIR / "medqa_direct_answer_logprobs.json"
 
 # Token IDs for A-E in Qwen2.5
