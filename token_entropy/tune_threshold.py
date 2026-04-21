@@ -15,12 +15,12 @@ from transformers import AutoTokenizer
 
 from token_entropy import (
     load_medqa_parquet,
+    load_medqa_validation,
     format_fast_prompt,
     format_reasoning_prompt,
     extract_answer_letter,
     compute_entropy_from_logprobs,
 )
-
 
 def main(args):
     print(f"Loading tokenizer from {args.model_name}...")
@@ -36,7 +36,7 @@ def main(args):
     )
 
     print(f"Loading data from {args.data_path}...")
-    examples = load_medqa_parquet(args.data_path)
+    examples = load_medqa_validation(args.data_path)
     if args.num_questions > 0:
         examples = examples[: args.num_questions]
     print(f"Loaded {len(examples)} questions.")
