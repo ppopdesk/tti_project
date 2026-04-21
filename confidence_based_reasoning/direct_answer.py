@@ -1,17 +1,15 @@
 import os
 import json
 import torch
-import numpy as np
 from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # --- Configuration ---
 MODEL_NAME = "ShivaniiKum/qwen-medreason-finetuned"
 VAL_SIZE = 300
-SAVE_INTERVAL = 10  # Save progress every 10 questions
+SAVE_INTERVAL = 10 
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-# .parent.parent moves from confidence_based_reasoning/ up to tti_project/
 PROJECT_ROOT = _SCRIPT_DIR.parent 
 
 INPUT_FILE = PROJECT_ROOT / "med_qa_json" / "validation.json" 
@@ -22,29 +20,30 @@ OUTPUT_FILE = OUTPUT_DIR / "medqa_direct_answer_logprobs.json"
 LETTER_TOKEN_IDS = {"A": 32, "B": 33, "C": 34, "D": 35, "E": 36}
 IDX_TO_LETTER = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E'}
 
-# The specific prompt template provided
-NO_REASONING_PROMPT = (
-    "Question: {question}\nOptions:\n{options_text}\n\n"
-    "You are a medical expert. "
-    "Provide the letter corresponding to the correct final answer to this multiple choice question. "
-    "Your output should only be the letter of your chosen output choice, nothing else."
-)
+# --- Core Logic ---
 
-# --- Utilities ---
+def build_prompt(tokenizer, question_text: str, prefix: str) -> str:
+    """
+    Uses the model's specific chat template to format the conversation.
+    continue_final_message=True ensures no extra EOT/BOS tokens are added after the prefix.
+    """
+    messages = [
+        {"role": "user", "content": question_text},
+        {"role": "assistant", "content": prefix},
+    ]
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+        continue_final_message=True,
+    )
 
 def _atomic_write_json(path: Path, obj) -> None:
-    """Writes to a temporary file then renames to avoid corruption during crashes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "w") as f:
         json.dump(obj, f, indent=2)
     tmp_path.replace(path)
-
-def format_prompt(question, options_text):
-    return NO_REASONING_PROMPT.format(
-        question=question, 
-        options_text=options_text
-    )
 
 def load_local_jsonl(path, limit):
     data = []
@@ -57,17 +56,14 @@ def load_local_jsonl(path, limit):
             data.append(json.loads(line))
     return data
 
-# --- Main Logic ---
-
 def main():
     print(f"Loading local MedQA data from {INPUT_FILE}...")
     examples = load_local_jsonl(INPUT_FILE, VAL_SIZE)
-    
-    if examples is None:
-        print(f"Error: {INPUT_FILE} not found.")
+    if not examples:
+        print("Error: Dataset not found or empty.")
         return
 
-    print(f"Loading tokenizer and model: {MODEL_NAME}...")
+    print(f"Loading model: {MODEL_NAME}...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
@@ -79,28 +75,34 @@ def main():
 
     results = []
 
-    print(f"Running direct answer probes on {len(examples)} questions...")
     for i, ex in enumerate(examples):
-        # 1. Map text answer to letter (A-E)
+        # 1. Map answer to letter
         try:
-            correct_answer_text = ex['answer'][0] 
-            correct_idx = ex['choices'].index(correct_answer_text)
+            correct_idx = ex['choices'].index(ex['answer'][0])
             correct_letter = IDX_TO_LETTER[correct_idx]
         except (ValueError, IndexError):
-            print(f"Skipping ID {ex.get('id', i)} due to answer mismatch.")
             continue
 
-        # 2. Format options and prompt
-        opts_list = [f"{IDX_TO_LETTER[j]}) {text}" for j, text in enumerate(ex['choices'])]
-        options_formatted = "\n".join(opts_list)
-        prompt_text = format_prompt(ex['question'], options_formatted)
+        # 2. Format options and combined user instruction
+        opts = "\n".join([f"{IDX_TO_LETTER[j]}) {text}" for j, text in enumerate(ex['choices'])])
         
-        # 3. Inference
-        inputs = tokenizer(prompt_text, return_tensors="pt").to(model.device)
+        # We put the detailed instruction inside the 'user' block
+        user_instruction = (
+            f"Question: {ex['question']}\nOptions:\n{opts}\n\n"
+            "You are a medical expert. Provide the letter corresponding to the correct final answer. "
+            "Your output should only be the letter, nothing else."
+        )
+
+        # 3. Build prompt using Chat Template
+        # Prefix is strictly "<ANSWER>\n" as requested
+        full_prompt = build_prompt(tokenizer, user_instruction, "<ANSWER>\n")
+        
+        # 4. Inference
+        inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
         with torch.no_grad():
             outputs = model(**inputs)
 
-        # 4. Extract Logprobs for A-E at the next-token position
+        # 5. Extract Logprobs
         next_token_logits = outputs.logits[0, -1, :]
         log_probs = torch.nn.functional.log_softmax(next_token_logits, dim=-1)
 
@@ -109,11 +111,10 @@ def main():
             for letter, tid in LETTER_TOKEN_IDS.items()
         }
 
-        # 5. Calculate Metrics
+        # 6. Metrics
         sorted_lps = sorted(choice_lps.items(), key=lambda x: x[1], reverse=True)
         best_letter, best_lp = sorted_lps[0]
         second_letter, second_lp = sorted_lps[1]
-        log_diff = float(best_lp - second_lp)
 
         results.append({
             "id": ex.get("id", i),
@@ -122,26 +123,17 @@ def main():
             "best_logprob": round(best_lp, 6),
             "second_letter": second_letter,
             "second_logprob": round(second_lp, 6),
-            "log_diff": round(log_diff, 6),
+            "log_diff": round(best_lp - second_lp, 6),
             "probe_correct": bool(best_letter == correct_letter),
         })
 
         # --- Periodic Checkpoint ---
-        current_count = i + 1
-        if current_count % SAVE_INTERVAL == 0:
+        if (i + 1) % SAVE_INTERVAL == 0:
             _atomic_write_json(OUTPUT_FILE, results)
-            print(f"   Processed {current_count}/{len(examples)} - Checkpoint saved.")
-        elif current_count % 10 == 0: # Still print progress even if not saving
-             print(f"   Processed {current_count}/{len(examples)}...")
+            print(f"Processed {i+1}/{len(examples)} - Logprob for correct ({correct_letter}): {choice_lps[correct_letter]:.4f}")
 
-    # Final Save
     _atomic_write_json(OUTPUT_FILE, results)
-    print(f"\nProcessing complete. Final results written to {OUTPUT_FILE}")
-
-    # Final summary stats
-    if results:
-        accuracy = sum(r["probe_correct"] for r in results) / len(results)
-        print(f"Final Probe Accuracy: {accuracy:.4f}")
+    print(f"Final results saved to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
