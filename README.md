@@ -10,11 +10,11 @@ substantially increasing training-time scale.
 
 The figure below depicts the three metrics we use to estimate model confidence:
 
---FIGURE HERE--
+![Model Confidence Metrics](model_confidence_metrics.png)
 
 From this, we create a pipeline that uses these metrics to dynamically allocate reasoning:
 
---FIGURE HERE--
+![CoT Pipeline](cot_pipeline.png)
 
 
 We see a 4.6% increase in accuracy and 55% reduction in token usage on the MedQA dataset when using our pipeline as compared to state-of-the-art baselines such as MedReason.
