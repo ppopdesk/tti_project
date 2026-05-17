@@ -1,4 +1,24 @@
-# Confidence-Based Classifier
+# Test-Time Inference for Medical Datasets
+
+Scaling LLMs to improve reasoning in specialized domains such as medicine is computationally expensive and often impractical. Test-time compute and domain-specific fine-tuning offer a more efficient path to improved performance; however, prior work shows that simply increasing test-time compute by extending chain-of-thought (CoT) reasoning does not always yield better results. In this work, we propose three confidence metrics for efficiently estimating model
+uncertainty at inference time. We use these metrics to develop AURA (Adaptive Uncertainty-Aware Reasoning
+Architecture), a pipeline that dynamically escalates between different CoT lengths based on model confidence. We
+evaluate AURA on MedQA, a medical reasoning benchmark, and show that it outperforms state-of-the-art medical
+reasoning models such as MedReason by ≈ 4.6% while reducing inference-time token usage by ≈ 55%. These results
+demonstrate the promise of uncertainty-aware test-time inference for improving domain-specific LLM performance without
+substantially increasing training-time scale.
+
+The figure below depicts the three metrics we use to estimate model confidence:
+
+--FIGURE HERE--
+
+From this, we create a pipeline that uses these metrics to dynamically allocate reasoning:
+
+--FIGURE HERE--
+
+
+We see a 4.6% increase in accuracy and 55% reduction in token usage on the MedQA dataset when using our pipeline as compared to state-of-the-art baselines such as MedReason.
+
 
 ## Setup Instructions
 
